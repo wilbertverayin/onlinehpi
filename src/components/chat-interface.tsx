@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, type FormEvent, Fragment, useMemo } from 'react';
 import { questions, type Question, type QuestionKey } from '@/lib/questions';
-import { verifyAnswerAction, textToSpeechAction } from '@/app/actions';
+import { isRedFlagAnswer, RED_FLAG_MESSAGE } from '@/lib/red-flags';
+import { textToSpeechAction } from '@/app/actions';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ChatBubble } from './chat-bubble';
 import { Sidebar } from './sidebar';
 import { QuickReplyPanel } from './quick-reply-panel';
-import { Send, Loader2, Volume2, VolumeX, Mic, MicOff, X, PanelRightOpen, Menu } from 'lucide-react';
+import { Send, Loader2, TriangleAlert, Volume2, VolumeX, Mic, MicOff, X, PanelRightOpen, Menu } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { cn, removeEmojis } from '@/lib/utils';
@@ -50,6 +51,7 @@ export default function ChatInterface() {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [isRedFlag, setIsRedFlag] = useState(false);
   const [editingState, setEditingState] = useState<{ key: QuestionKey; id: string | number } | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -355,7 +357,15 @@ export default function ChatInterface() {
     }
   };
 
+  const exitOnRedFlag = async (answer: string) => {
+    if (!isRedFlagAnswer(answer)) return false;
+    setIsRedFlag(true);
+    await addBotMessageAndSpeak(RED_FLAG_MESSAGE);
+    return true;
+  };
+
   const processNextQuestion = async (answer: string, question: Question) => {
+    if (await exitOnRedFlag(answer)) return;
     setAnswers(prev => ({ ...prev, [question.key]: answer }));
     await advanceToNextQuestion();
   };
@@ -368,6 +378,11 @@ export default function ChatInterface() {
     if (editingState) {
         const newAnswer = inputValue.trim();
         if (!newAnswer) {
+            setEditingState(null);
+            setInputValue('');
+            return;
+        }
+        if (await exitOnRedFlag(newAnswer)) {
             setEditingState(null);
             setInputValue('');
             return;
@@ -391,13 +406,7 @@ export default function ChatInterface() {
 
     setIsLoading(true);
 
-    const verificationResult = await verifyAnswerAction({ question: currentQuestion.label, answer: currentAnswer });
-    if (verificationResult.isValid) {
-      await processNextQuestion(verificationResult.correctedAnswer, currentQuestion);
-    } else {
-      const botMessage = "Paumanhin, hindi ko masyadong naintindihan ang iyong sagot. Maaari mo bang subukang ipaliwanag muli sa ibang paraan?";
-      await addBotMessageAndSpeak(botMessage, botMessage);
-    }
+    await processNextQuestion(currentAnswer, currentQuestion);
     setIsLoading(false);
   };
 
@@ -411,6 +420,11 @@ export default function ChatInterface() {
     if (editingState) {
         const question = visibleQuestions.find(q => q.key === editingState.key);
         if (question?.interactive?.type !== 'multi-select') {
+          if (await exitOnRedFlag(answer)) {
+            setEditingState(null);
+            setInputValue('');
+            return;
+          }
           setMessages(prev => prev.map(msg => 
               msg.id === editingState.id ? { ...msg, content: answer } : msg
           ));
@@ -611,6 +625,11 @@ export default function ChatInterface() {
     const question = visibleQuestions.find(q => q.key === currentKey)!;
 
     if (editingState) {
+        if (await exitOnRedFlag(combinedAnswer)) {
+            setEditingState(null);
+            setSelectedReplies([]);
+            return;
+        }
         setMessages(prev => prev.map(msg => 
             msg.id === editingState.id ? { ...msg, content: combinedAnswer } : msg
         ));
@@ -692,7 +711,10 @@ export default function ChatInterface() {
     toast({ title: "Download started!", description: "Check your downloads for the summary file." });
   };
 
+  const handlePrint = () => window.print();
+
   const restartInterview = () => {
+    setIsRedFlag(false);
     if (isRecording) stopListening();
     interruptSpeech();
     setMessages([]);
@@ -731,6 +753,7 @@ export default function ChatInterface() {
     handleBodyPartSubmit,
     handleCopy,
     handleDownload,
+    handlePrint,
   };
 
   const sheetTitle = isComplete && !editingState
@@ -743,7 +766,8 @@ export default function ChatInterface() {
 
 
   return (
-    <div className="flex flex-col h-dvh bg-card text-card-foreground">
+    <>
+    <div className="flex flex-col h-dvh bg-card text-card-foreground print:hidden">
        <header className="flex-shrink-0 border-b flex items-center justify-between w-full px-4 h-16">
           <div className="flex items-center gap-2">
               {!isDesktop && (
@@ -857,10 +881,21 @@ export default function ChatInterface() {
                 </div>
             )}
             <div className="p-4">
-                {isComplete && !editingState ? (
+                {isRedFlag ? (
+                <div role="alert" className="w-full flex flex-col gap-2 items-center text-center">
+                    <p className="flex items-center gap-2 text-lg font-bold text-red-700">
+                      <TriangleAlert className="h-6 w-6" aria-hidden="true" />
+                      {RED_FLAG_MESSAGE}
+                    </p>
+                    <Button variant="outline" onClick={restartInterview}>Start over</Button>
+                </div>
+                ) : isComplete && !editingState ? (
                 <div className="w-full flex flex-col gap-2">
                     <Button onClick={() => setIsQuickReplyOpen(true)} className="w-full">
                       Preview Summary
+                    </Button>
+                    <Button variant="outline" onClick={handlePrint} className="w-full">
+                      Print Summary
                     </Button>
                 </div>
                 ) : (
@@ -942,5 +977,22 @@ export default function ChatInterface() {
         </Sheet>
       </div>
     </div>
+    {isComplete && (
+      <section className="hidden print:block p-8 text-black" aria-label="Printable summary">
+        <h1 className="text-2xl font-bold">OnlineHPI Assessment Summary</h1>
+        <p className="text-sm mb-6">{new Date().toLocaleDateString('en-US', { dateStyle: 'long' })}</p>
+        {visibleQuestions.map(q => {
+          const answer = answers[q.key];
+          if (!answer || answer === 'N/A') return null;
+          return (
+            <div key={q.key} className="mb-3 break-inside-avoid">
+              <h2 className="font-semibold">{q.label}</h2>
+              <p>{removeEmojis(answer)}</p>
+            </div>
+          );
+        })}
+      </section>
+    )}
+    </>
   );
 }

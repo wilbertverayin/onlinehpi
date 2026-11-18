@@ -52,6 +52,7 @@ interface QuickReplyPanelProps {
     handleBodyPartSubmit: () => void;
     handleCopy: () => void;
     handleDownload: () => void;
+    handlePrint: () => void;
 }
 
 export function QuickReplyPanel({
@@ -75,6 +76,7 @@ export function QuickReplyPanel({
     handleBodyPartSubmit,
     handleCopy,
     handleDownload,
+    handlePrint,
 }: QuickReplyPanelProps) {
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
     const prevStepRef = useRef<string | undefined>();
@@ -127,6 +129,7 @@ export function QuickReplyPanel({
                 <div className="mt-auto border-t p-4 flex-shrink-0 flex flex-col gap-2">
                     <Button onClick={handleCopy} className="w-full">Copy Summary</Button>
                     <Button onClick={handleDownload} className="w-full">Download Summary</Button>
+                    <Button onClick={handlePrint} className="w-full">Print Summary</Button>
                 </div>
             </div>
         );
